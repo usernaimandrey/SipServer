@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS users(
+   id serial PRIMARY KEY,
+   password_hash VARCHAR (50) NOT NULL,
+   role VARCHAR (50) NOT NULL DEFAULT 'user',
+   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
