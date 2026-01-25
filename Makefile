@@ -31,3 +31,6 @@ migration-force:
 
 connect-db:
 	psql --user=postgres --host=localhost --dbname=ipphone_db --port=5433
+
+udp-dump:
+	sudo tcpdump -ni any -s 0 -vv udp port 5060

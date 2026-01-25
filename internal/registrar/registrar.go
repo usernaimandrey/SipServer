@@ -1,7 +1,6 @@
 package registrar
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -44,7 +43,6 @@ func (r *Registrar) Put(user string, contact sip.Uri, source string, expires tim
 func (r *Registrar) Get(user string) (ContactBinding, bool) {
 	r.mu.RLock()
 	b, ok := r.loc[user]
-	fmt.Println("GET user: %s", b.Contact)
 	r.mu.RUnlock()
 	if !ok {
 		return ContactBinding{}, false

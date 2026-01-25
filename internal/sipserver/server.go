@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +42,7 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, er
 	srv.OnRegister(s.onRegister) // хендлеры вида func(req *sip.Request, tx sip.ServerTransaction) :contentReference[oaicite:1]{index=1}
 	srv.OnInvite(s.onInvite)
 	srv.OnBye(s.onBye)
+	srv.OnAck(s.onAck)
 
 	// На всякий случай: если прилетит что-то ещё
 	srv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
@@ -90,6 +93,21 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 		}
 	}
 
+	src := req.Source()
+
+	reachable, ok := makeReachableContact(login, src)
+
+	if ok {
+		s.reg.Put(login, reachable, src, 60*time.Second)
+		log.Printf("[REGISTER] user=%s contact=%s (normalized) source=%s",
+			login, reachable.String(), src)
+	} else {
+		// fallback: как есть, но лучше логировать как "подозрительно"
+		s.reg.Put(login, contact.Address, src, 60*time.Second)
+		log.Printf("[REGISTER] user=%s contact=%s (raw) source=%s",
+			login, contact.Address.String(), src)
+	}
+
 	// Параметр expires: в SIP бывает и в заголовке Expires, и в Contact; для прототипа возьмём дефолт.
 	s.reg.Put(login, contact.Address, req.Source(), 60*time.Second)
 
@@ -97,6 +115,16 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 	_ = tx.Respond(res)
+}
+
+func (s *Server) onAck(req *sip.Request, tx sip.ServerTransaction) {
+	log.Printf("[ACK] callid=%s cseq=%s via=%s from=%s to=%s",
+		req.CallID(),
+		req.CSeq(),
+		req.Via(),
+		req.From(),
+		req.To(),
+	)
 }
 
 func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
@@ -117,6 +145,23 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	callee := strings.TrimSpace(to.Address.User)
 
+	newUser := user.NewUser()
+
+	_, err := newUser.FindByLogin(callee, s.db)
+
+	if err != nil {
+		if errors.As(err, &userNotFound) {
+			log.Printf("[INVITE] callee=%s not registered", callee)
+			res := sip.NewResponseFromRequest(req, sip.StatusNotFound, "Not Found", nil)
+			_ = tx.Respond(res)
+			return
+		} else {
+			res := sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "InternalError", nil)
+			_ = tx.Respond(res)
+			return
+		}
+	}
+
 	binding, ok := s.reg.Get(callee)
 	if !ok {
 		log.Printf("[INVITE] callee=%s not registered", callee)
@@ -130,11 +175,27 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	// 302 + Contact: <sip:callee@ip:port>
 	res := sip.NewResponseFromRequest(req, sip.StatusMovedTemporarily, "Moved Temporarily", nil)
 
-	// В ответ добавляем Contact
-	res.AppendHeader(&sip.ContactHeader{ // структура ContactHeader: DisplayName/Address/Params :contentReference[oaicite:4]{index=4}
-		Address: binding.Contact,
+	target := sip.Uri{
+		Scheme: "sip",
+		User:   callee,
+		Host:   binding.Contact.Host,
+		Port:   binding.Contact.Port,
+	}
+	target.UriParams = sip.NewParams().Add("transport", "udp")
+
+	res.AppendHeader(&sip.ContactHeader{
+		Address: target,
 	})
 
+	log.Printf(
+		"Via: %s To: %s, From: %s, Call-ID: %s, CSeq: %s, Contact: %s",
+		req.Via(),
+		&req.To().Address,
+		&req.From().Address,
+		req.CallID().String(),
+		req.CSeq().String(),
+		req.Contact().String(),
+	)
 	_ = tx.Respond(res)
 }
 
@@ -152,4 +213,25 @@ func safeCallID(req *sip.Request) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", req.CallID())
+}
+
+func makeReachableContact(login string, src string) (sip.Uri, bool) {
+	host, portStr, err := net.SplitHostPort(src)
+	if err != nil {
+		return sip.Uri{}, false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return sip.Uri{}, false
+	}
+
+	u := sip.Uri{
+		Scheme: "sip",
+		User:   login,
+		Host:   host,
+		Port:   port,
+	}
+	// URI params: ;transport=udp
+	u.UriParams = sip.NewParams().Add("transport", "udp")
+	return u, true
 }
