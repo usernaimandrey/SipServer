@@ -11,7 +11,7 @@ import (
 
 type DbCloser func()
 
-func DbConnecter(defaultDB bool) (*sql.DB, string, DbCloser, error) {
+func DbConnecter(defaultDB bool, retry int) (*sql.DB, string, DbCloser, error) {
 	err := godotenv.Load()
 
 	closer := func() {}
@@ -52,8 +52,10 @@ func DbConnecter(defaultDB bool) (*sql.DB, string, DbCloser, error) {
 
 	err = db.Ping()
 
-	if err != nil {
+	if err != nil && retry == 0 {
 		return db, "", closer, err
+	} else if err != nil && retry != 0 {
+		return DbConnecter(defaultDB, retry-1)
 	}
 	return db, dbName, closer, nil
 }

@@ -9,6 +9,8 @@ import (
 	_ "github.com/lib/pq"
 )
 
+const retry int = 1
+
 func main() {
 	err := godotenv.Load()
 
@@ -17,7 +19,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, dbName, closer, err := connecter.DbConnecter(true)
+	db, dbName, closer, err := connecter.DbConnecter(true, retry)
 
 	defer closer()
 

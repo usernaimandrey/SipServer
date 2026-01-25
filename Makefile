@@ -1,6 +1,7 @@
 POSTGRESQL_URL := postgres://postgres@localhost:5433/ipphone_db?sslmode=disable
 
 run:
+	docker-compose start
 	go run cmd/pbx/main.go
 
 tcp-dump:
@@ -9,6 +10,9 @@ tcp-dump:
 compose-create:
 	docker-compose build
 	docker-compose create
+
+compose-db-start:
+	docker-compose start
 
 db-dev-prepare:
 	ENV=dev go run scripts/db_creator/db_creator.go
@@ -24,3 +28,6 @@ migration-down:
 
 migration-force:
 	migrate -database $(POSTGRESQL_URL) -path db/migrations force $(V)
+
+connect-db:
+	psql --user=postgres --host=localhost --dbname=ipphone_db --port=5433

@@ -2,6 +2,8 @@ package sipserver
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -10,15 +12,19 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 
+	"SipServer/internal/entity/user"
 	"SipServer/internal/registrar"
 )
+
+var userNotFound *user.UserNotFoundError
 
 type Server struct {
 	srv *sipgo.Server
 	reg *registrar.Registrar
+	db  *sql.DB
 }
 
-func New(ua *sipgo.UserAgent, reg *registrar.Registrar) (*Server, error) {
+func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, error) {
 	srv, err := sipgo.NewServer(ua)
 	if err != nil {
 		return nil, err
@@ -27,6 +33,7 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar) (*Server, error) {
 	s := &Server{
 		srv: srv,
 		reg: reg,
+		db:  db,
 	}
 
 	// REGISTER / INVITE / BYE — ключевые методы для прототипа
@@ -60,17 +67,33 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	user := strings.TrimSpace(from.Address.User)
-	if user == "" {
+	login := strings.TrimSpace(from.Address.User)
+	if login == "" {
 		res := sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil)
 		_ = tx.Respond(res)
 		return
 	}
 
-	// Параметр expires: в SIP бывает и в заголовке Expires, и в Contact; для прототипа возьмём дефолт.
-	s.reg.Put(user, contact.Address, req.Source(), 60*time.Second)
+	newUser := user.NewUser()
+	_, err := newUser.FindByLogin(login, s.db)
 
-	log.Printf("[REGISTER] user=%s contact=%s source=%s", user, contact.Address.String(), req.Source())
+	if err != nil {
+		if errors.As(err, &userNotFound) {
+			log.Printf("user %s not founf", login)
+			res := sip.NewResponseFromRequest(req, sip.StatusNotFound, "NotFound", nil)
+			_ = tx.Respond(res)
+			return
+		} else {
+			res := sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "InternalError", nil)
+			_ = tx.Respond(res)
+			return
+		}
+	}
+
+	// Параметр expires: в SIP бывает и в заголовке Expires, и в Contact; для прототипа возьмём дефолт.
+	s.reg.Put(login, contact.Address, req.Source(), 60*time.Second)
+
+	log.Printf("[REGISTER] user=%s contact=%s source=%s", login, contact.Address.String(), req.Source())
 
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 	_ = tx.Respond(res)

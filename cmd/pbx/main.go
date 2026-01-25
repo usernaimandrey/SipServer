@@ -12,6 +12,11 @@ import (
 
 	"SipServer/internal/registrar"
 	"SipServer/internal/sipserver"
+	"SipServer/pkg/dbconnecter"
+)
+
+const (
+	retry int = 3
 )
 
 func main() {
@@ -23,7 +28,15 @@ func main() {
 
 	reg := registrar.New(60 * time.Second)
 
-	s, err := sipserver.New(ua, reg)
+	db, _, dbCloser, err := dbconnecter.DbConnecter(false, retry)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer dbCloser()
+
+	s, err := sipserver.New(ua, reg, db)
 	if err != nil {
 		log.Fatal(err)
 	}

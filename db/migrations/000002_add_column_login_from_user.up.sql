@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN login VARCHAR(255);
