@@ -5,14 +5,17 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/emiago/sipgo"
-
+	"SipServer/internal/entity/user"
 	"SipServer/internal/registrar"
 	"SipServer/internal/sipserver"
 	"SipServer/pkg/dbconnecter"
+
+	"github.com/emiago/sipgo"
+	"github.com/joho/godotenv"
 )
 
 const (
@@ -20,6 +23,19 @@ const (
 )
 
 func main() {
+	err := godotenv.Load()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sipHost := os.Getenv("PUBLIC_HOST")
+	sipPort, err := strconv.Atoi(os.Getenv("PUBLIC_PORT"))
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	ua, err := sipgo.NewUA() // создание UserAgent :contentReference[oaicite:5]{index=5}
 	if err != nil {
 		log.Fatal(err)
@@ -34,9 +50,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	userRepo := user.NewUserRepo(db)
+
 	defer dbCloser()
 
-	s, err := sipserver.New(ua, reg, db)
+	s, err := sipserver.New(ua, reg, db, sipHost, sipPort, userRepo)
 	if err != nil {
 		log.Fatal(err)
 	}

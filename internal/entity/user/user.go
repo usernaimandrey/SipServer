@@ -23,13 +23,23 @@ type User struct {
 	Role  string
 }
 
+type UserRepo struct {
+	Db *sql.DB
+}
+
 func NewUser() *User {
 	return &User{}
 }
 
-func (u *User) FindByLogin(login string, db *sql.DB) (*User, error) {
+func NewUserRepo(db *sql.DB) *UserRepo {
+	return &UserRepo{
+		Db: db,
+	}
+}
+
+func (u *UserRepo) FindByLogin(login string) (*User, error) {
 	user := NewUser()
-	row := db.QueryRow("SELECT id, login, role FROM users where login = $1", login)
+	row := u.Db.QueryRow("SELECT id, login, role FROM users where login = $1", login)
 	err := row.Scan(&user.Id, &user.Login, &user.Role)
 
 	if err != nil {
