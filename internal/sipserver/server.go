@@ -250,46 +250,6 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 
 }
 
-// func (s *Server) onInDialogProxy(req *sip.Request, stx sip.ServerTransaction) {
-// 	// (опционально) если первый Route = мы, убираем его, чтобы не зациклиться
-// 	if r := req.Route(); r != nil {
-// 		if strings.EqualFold(r.Address.Host, s.publicHost) && r.Address.Port == s.publicPort {
-// 			req.RemoveHeader("Route")
-// 		}
-// 	}
-
-// 	out := req.Clone()
-
-// 	// Destination: в простом случае шлём на Request-URI (Recipient)
-// 	out.SetDestination(out.Recipient.HostPort())
-
-// 	decreaseMaxForwards(out)
-// 	s.addTopVia(out)
-
-// 	if req.Method == sip.ACK {
-// 		if err := s.cli.WriteRequest(out); err != nil {
-// 			log.Printf("[ACK] forward failed err=%v", err)
-// 		}
-// 		return
-// 	}
-
-// 	// Остальное (BYE/INFO/OPTIONS...) можно транзакционно
-// 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-// 	defer cancel()
-
-// 	ctxTx, err := s.cli.TransactionRequest(ctx, out)
-// 	if err != nil {
-// 		_ = stx.Respond(sip.NewResponseFromRequest(req, sip.StatusServiceUnavailable, "Service Unavailable", nil))
-// 		return
-// 	}
-
-// 	go func() {
-// 		for resp := range ctxTx.Responses() {
-// 			_ = stx.Respond(resp)
-// 		}
-// 	}()
-// }
-
 func (s *Server) onInDialogProxy(req *sip.Request, stx sip.ServerTransaction) {
 	out := req.Clone()
 
