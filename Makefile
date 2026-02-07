@@ -7,6 +7,9 @@ run:
 tcp-dump:
 	sudo tcpdump -i wlo1 -n -A udp port 5060
 
+tcp-dump-with-lo:
+	sudo tcpdump -ni any udp port 5060 or udp port 5061 -vv
+
 compose-create:
 	docker-compose build
 	docker-compose create

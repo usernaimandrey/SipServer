@@ -1,0 +1,210 @@
+package sipserver
+
+import (
+	"errors"
+	"strings"
+
+	"github.com/emiago/sipgo/sip"
+)
+
+func decreaseMaxForwards(req *sip.Request) error {
+	mf := req.MaxForwards()
+	if mf == nil {
+		h := sip.MaxForwardsHeader(70)
+		req.AppendHeader(&h)
+		return nil
+	}
+
+	if mf.Val() == 0 {
+		return errors.New("to many hops")
+	}
+	mf.Dec()
+
+	return nil
+}
+
+func hasViaLoop(req *sip.Request, hostport string) error {
+
+	vias := req.GetHeaders("Via")
+	for _, h := range vias {
+		vh, ok := h.(*sip.ViaHeader)
+		if !ok || vh == nil {
+			continue
+		}
+
+		if strings.EqualFold(vh.SentBy(), hostport) {
+			return errors.New("loop detected")
+		}
+
+	}
+	return nil
+}
+
+func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort int) *sip.Request {
+	out := sip.NewRequest(sip.INVITE, *target)
+
+	copyFrom := *in.From()
+	copyTo := *in.To()
+	copyCallId := *in.CallID()
+	copyCSeq := *in.CSeq()
+
+	out.AppendHeader(&copyFrom)
+	out.AppendHeader(&copyTo)
+	out.AppendHeader(&copyCallId)
+	out.AppendHeader(&copyCSeq)
+
+	if h := in.Contact(); h != nil {
+		out.AppendHeader(h.Clone())
+	}
+
+	// 4) Max-Forwards
+	var mf uint32 = 70
+	if h := in.MaxForwards(); h != nil {
+		mf = h.Val()
+	}
+	if mf <= 0 {
+		// это надо обработать выше: 483 Too Many Hops
+		mf = 0
+	} else {
+		mf--
+	}
+
+	var maxForwardsHeader sip.MaxForwardsHeader = sip.MaxForwardsHeader(mf)
+	out.AppendHeader(&maxForwardsHeader)
+
+	// 5) Record-Route (важно: только для initial INVITE)
+	rr := &sip.RecordRouteHeader{
+		Address: sip.Uri{
+			Scheme: "sip",
+			Host:   myHost,
+			Port:   myPort,
+			// lr параметр
+			UriParams: sip.NewParams().Add("lr", ""),
+		},
+	}
+	out.AppendHeader(rr)
+
+	for _, h := range in.GetHeaders("Via") {
+		if vh, ok := h.(*sip.ViaHeader); ok && vh != nil {
+			c := *vh             // копия структуры
+			out.AppendHeader(&c) // новый указатель
+			continue
+		}
+		// на всякий случай, если вдруг попадёт не ViaHeader
+		out.AppendHeader(h)
+	}
+	// 6) Via — добавляем свой top Via (у out должен быть свой branch)
+	// В sipgo обычно есть helper, но если нет — создаёте ViaHeader вручную.
+	via := &sip.ViaHeader{
+		Transport: "UDP",
+		Host:      "192.168.0.21",
+		Port:      5060,
+		Params:    sip.NewParams(),
+	}
+	via.Params.Add("branch", sip.GenerateBranch()) // или ваш генератор z9hG4bK...
+	via.Params.Add("rport", "")
+	via.ProtocolName = "SIP"
+	via.ProtocolVersion = "2.0"
+	out.PrependHeader(via)
+
+	if body := in.Body(); len(body) > 0 {
+		out.SetBody(body)
+		if ct := in.ContentType(); ct != nil {
+			cloneCt := *ct
+			out.AppendHeader(&cloneCt)
+		} else {
+			var contentType sip.ContentTypeHeader = sip.ContentTypeHeader("application/sdp")
+			out.AppendHeader(&contentType)
+		}
+	}
+
+	return out
+}
+
+func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
+	// Создаём “правильную” оболочку ответа для A-side транзакции
+	up := sip.NewResponseFromRequest(orig, down.StatusCode, down.Reason, nil)
+
+	for _, h := range orig.GetHeaders("Via") {
+		if vh, ok := h.(*sip.ViaHeader); ok && vh != nil {
+			c := *vh
+			up.AppendHeader(&c)
+		} else {
+			up.AppendHeader(h)
+		}
+	}
+
+	copyFrom := *down.From()
+	copyTo := *down.To()
+	copyCallId := *down.CallID()
+	copyCSeq := *down.CSeq()
+
+	up.ReplaceHeader(&copyFrom)
+	up.ReplaceHeader(&copyTo)
+	up.ReplaceHeader(&copyCallId)
+	up.ReplaceHeader(&copyCSeq)
+
+	// 2) Record-Route / Contact (нужны клиенту)
+	up.RemoveHeader("Record-Route")
+	for _, h := range down.GetHeaders("Record-Route") {
+		up.AppendHeader(h)
+	}
+	if c := down.Contact(); c != nil {
+		up.AppendHeader(c.Clone())
+	}
+
+	// 3) SDP и Content-Type (для RTP напрямую просто передаём как есть)
+	if body := down.Body(); len(body) > 0 {
+		up.SetBody(body)
+		if ct := down.ContentType(); ct != nil {
+			clone := *ct
+			up.AppendHeader(&clone)
+		} else {
+			contentType := sip.ContentTypeHeader("application/sdp")
+			up.AppendHeader(&contentType)
+		}
+		cl := sip.ContentLengthHeader(len(body))
+		up.AppendHeader(&cl)
+	} else {
+		cl := sip.ContentLengthHeader(0)
+		up.AppendHeader(&cl)
+	}
+
+	return up
+}
+
+func MakeDialogKey(callID, tagA, tagB string) (string, string) {
+	key1 := callID + "|" + tagA + "|" + tagB
+	key2 := callID + "|" + tagB + "|" + tagA
+
+	return key1, key2
+}
+
+func buildRouteSet(resp *sip.Response) []*sip.RouteHeader {
+	var rr []*sip.RecordRouteHeader
+	for _, h := range resp.GetHeaders("Record-Route") {
+		if x, ok := h.(*sip.RecordRouteHeader); ok && x != nil {
+			rr = append(rr, x)
+		}
+	}
+
+	// reverse!
+	routes := make([]*sip.RouteHeader, 0, len(rr))
+	for i := len(rr) - 1; i >= 0; i-- {
+		routes = append(routes, &sip.RouteHeader{Address: rr[i].Address})
+	}
+	return routes
+}
+
+func stripSelfRoute(routes []*sip.RouteHeader, myHost string, myPort int) []*sip.RouteHeader {
+	out := routes
+	for len(out) > 0 {
+		r := out[0]
+		if r != nil && r.Address.Host == myHost && int(r.Address.Port) == myPort {
+			out = out[1:] // убрали свой Route
+			continue
+		}
+		break
+	}
+	return out
+}
