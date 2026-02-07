@@ -15,6 +15,9 @@ type InviteCtx struct {
 	CreatedAt     time.Time
 	ClientTx      sip.ClientTransaction
 	DialogCreated atomic.Bool
+	OutInvite     *sip.Request
+	FinalRespCode int
+	Got2xx        bool
 }
 
 func NewInviteCtx() *InviteCtx {

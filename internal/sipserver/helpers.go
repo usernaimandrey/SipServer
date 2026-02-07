@@ -57,13 +57,11 @@ func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort
 		out.AppendHeader(h.Clone())
 	}
 
-	// 4) Max-Forwards
 	var mf uint32 = 70
 	if h := in.MaxForwards(); h != nil {
 		mf = h.Val()
 	}
 	if mf <= 0 {
-		// это надо обработать выше: 483 Too Many Hops
 		mf = 0
 	} else {
 		mf--
@@ -72,13 +70,11 @@ func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort
 	var maxForwardsHeader sip.MaxForwardsHeader = sip.MaxForwardsHeader(mf)
 	out.AppendHeader(&maxForwardsHeader)
 
-	// 5) Record-Route (важно: только для initial INVITE)
 	rr := &sip.RecordRouteHeader{
 		Address: sip.Uri{
-			Scheme: "sip",
-			Host:   myHost,
-			Port:   myPort,
-			// lr параметр
+			Scheme:    "sip",
+			Host:      myHost,
+			Port:      myPort,
 			UriParams: sip.NewParams().Add("lr", ""),
 		},
 	}
@@ -86,22 +82,20 @@ func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort
 
 	for _, h := range in.GetHeaders("Via") {
 		if vh, ok := h.(*sip.ViaHeader); ok && vh != nil {
-			c := *vh             // копия структуры
-			out.AppendHeader(&c) // новый указатель
+			c := *vh
+			out.AppendHeader(&c)
 			continue
 		}
-		// на всякий случай, если вдруг попадёт не ViaHeader
 		out.AppendHeader(h)
 	}
-	// 6) Via — добавляем свой top Via (у out должен быть свой branch)
-	// В sipgo обычно есть helper, но если нет — создаёте ViaHeader вручную.
+
 	via := &sip.ViaHeader{
 		Transport: "UDP",
 		Host:      "192.168.0.21",
 		Port:      5060,
 		Params:    sip.NewParams(),
 	}
-	via.Params.Add("branch", sip.GenerateBranch()) // или ваш генератор z9hG4bK...
+	via.Params.Add("branch", sip.GenerateBranch())
 	via.Params.Add("rport", "")
 	via.ProtocolName = "SIP"
 	via.ProtocolVersion = "2.0"
@@ -122,7 +116,6 @@ func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort
 }
 
 func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
-	// Создаём “правильную” оболочку ответа для A-side транзакции
 	up := sip.NewResponseFromRequest(orig, down.StatusCode, down.Reason, nil)
 
 	for _, h := range orig.GetHeaders("Via") {
@@ -144,7 +137,6 @@ func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
 	up.ReplaceHeader(&copyCallId)
 	up.ReplaceHeader(&copyCSeq)
 
-	// 2) Record-Route / Contact (нужны клиенту)
 	up.RemoveHeader("Record-Route")
 	for _, h := range down.GetHeaders("Record-Route") {
 		up.AppendHeader(h)
@@ -153,7 +145,6 @@ func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
 		up.AppendHeader(c.Clone())
 	}
 
-	// 3) SDP и Content-Type (для RTP напрямую просто передаём как есть)
 	if body := down.Body(); len(body) > 0 {
 		up.SetBody(body)
 		if ct := down.ContentType(); ct != nil {
@@ -188,7 +179,6 @@ func buildRouteSet(resp *sip.Response) []*sip.RouteHeader {
 		}
 	}
 
-	// reverse!
 	routes := make([]*sip.RouteHeader, 0, len(rr))
 	for i := len(rr) - 1; i >= 0; i-- {
 		routes = append(routes, &sip.RouteHeader{Address: rr[i].Address})
@@ -201,7 +191,7 @@ func stripSelfRoute(routes []*sip.RouteHeader, myHost string, myPort int) []*sip
 	for len(out) > 0 {
 		r := out[0]
 		if r != nil && r.Address.Host == myHost && int(r.Address.Port) == myPort {
-			out = out[1:] // убрали свой Route
+			out = out[1:]
 			continue
 		}
 		break

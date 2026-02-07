@@ -84,6 +84,7 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, er
 	srv.OnInvite(s.onInvite)
 	srv.OnBye(s.onBye)
 	srv.OnAck(s.onAck)
+	srv.OnCancel(s.onCancel)
 
 	// На всякий случай: если прилетит что-то ещё
 	srv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
@@ -103,7 +104,7 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 	// В перспективе: 401 + WWW-Authenticate и проверка Authorization.
 
 	from := req.From()
-	contact := req.Contact() // Contact() есть у Request :contentReference[oaicite:2]{index=2}
+	contact := req.Contact()
 
 	if from == nil || contact == nil {
 		res := sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil)
@@ -143,13 +144,11 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 		log.Printf("[REGISTER] user=%s contact=%s (normalized) source=%s",
 			login, reachable.String(), src)
 	} else {
-		// fallback: как есть, но лучше логировать как "подозрительно"
 		s.reg.Put(login, contact.Address, src, 60*time.Second)
 		log.Printf("[REGISTER] user=%s contact=%s (raw) source=%s",
 			login, contact.Address.String(), src)
 	}
 
-	// Параметр expires: в SIP бывает и в заголовке Expires, и в Contact; для прототипа возьмём дефолт.
 	s.reg.Put(login, contact.Address, req.Source(), 60*time.Second)
 
 	log.Printf("[REGISTER] user=%s contact=%s source=%s", login, contact.Address.String(), req.Source())
@@ -185,23 +184,19 @@ func (s *Server) onAck(req *sip.Request, tx sip.ServerTransaction) {
 	copyCallId := *req.CallID()
 	copyCSeq := *req.CSeq()
 
-	// копируем From/To/Call-ID/CSeq(ACK) из входящего ACK
 	ack.AppendHeader(&copyFrom)
 	ack.AppendHeader(&copyTo)
 	ack.AppendHeader(&copyCallId)
 	ack.AppendHeader(&copyCSeq)
 
-	// Route set
 	routes := stripSelfRoute(dlg.RouteSet, s.host, s.port)
 	for _, r := range routes {
 		ack.AppendHeader(r)
 	}
 
-	// Max-Forwards
 	var mf sip.MaxForwardsHeader = 70
 	ack.AppendHeader(&mf)
 
-	// Via top (свой)
 	via := &sip.ViaHeader{
 		Transport: "UDP",
 		Host:      s.host,
@@ -323,6 +318,8 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 			res := sip.NewResponseFromRequest(req, sip.StatusServiceUnavailable, "User Unavailable", nil)
 			_ = tx.Respond(res)
 		}
+		newCtx.ClientTx = clTx
+		newCtx.OutInvite = outBoundInvite
 
 		go s.proxyInviteResponses(newCtx, clTx)
 	} else {
@@ -395,6 +392,70 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 	case <-time.After(3 * time.Second):
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 504, "Server Time-out", nil))
 	}
+}
+
+func (s *Server) onCancel(req *sip.Request, tx sip.ServerTransaction) {
+	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
+
+	key, ok := inviteKeyFromReq(req)
+	if !ok {
+		log.Println("[CANCEL] Invite key not found")
+		return
+	}
+
+	v, exists := s.transaction.Load(key)
+	if !exists {
+		log.Println("[CANCEL] Transaction not found by key %s", key)
+		return
+	}
+	ctx, ok := v.(*InviteCtx)
+	if !ok || ctx == nil {
+		return
+	}
+
+	if ctx.LastResp != nil && ctx.LastResp.StatusCode >= 200 {
+		return
+	}
+
+	if ctx.OutInvite == nil {
+		_ = ctx.ServerTx.Respond(
+			sip.NewResponseFromRequest(ctx.OriginInvite, sip.StatusRequestTerminated, "Request Terminated", nil),
+		)
+		s.transaction.Delete(key)
+		return
+	}
+
+	cancel := sip.NewRequest(sip.CANCEL, ctx.OutInvite.Recipient)
+
+	copyFrom := *ctx.OutInvite.From()
+	copyTo := *ctx.OutInvite.To()
+	copyCallID := *ctx.OutInvite.CallID()
+
+	cseq := *ctx.OutInvite.CSeq()
+	cseq.MethodName = sip.CANCEL
+
+	cancel.AppendHeader(&copyFrom)
+	cancel.AppendHeader(&copyTo)
+	cancel.AppendHeader(&copyCallID)
+	cancel.AppendHeader(&cseq)
+
+	for _, h := range ctx.OutInvite.GetHeaders("Route") {
+		cancel.AppendHeader(h)
+	}
+
+	if v := ctx.OutInvite.Via(); v != nil {
+		vcopy := *v
+		cancel.PrependHeader(&vcopy)
+	} else {
+		log.Println("[CANCEL] OutInvite has no Via")
+		return
+	}
+
+	mf := sip.MaxForwardsHeader(70)
+	cancel.AppendHeader(&mf)
+
+	_, _ = s.cl.TransactionRequest(context.Background(), cancel)
+
 }
 
 func makeReachableContact(login string, src string) (sip.Uri, bool) {
