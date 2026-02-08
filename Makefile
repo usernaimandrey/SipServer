@@ -10,6 +10,9 @@ tcp-dump:
 tcp-dump-with-lo:
 	sudo tcpdump -ni any udp port 5060 or udp port 5061 -vv
 
+udp-dump:
+	sudo tcpdump -ni any -s 0 -vv udp port 5060
+
 compose-create:
 	docker-compose build
 	docker-compose create
@@ -21,6 +24,7 @@ db-dev-prepare:
 	ENV=dev go run scripts/db_creator/db_creator.go
 
 create-migration:
+  # export PATH=$PATH:$(go env GOPATH)/bin
 	migrate create -ext sql -dir db/migrations -seq $(NAME)
 
 migration-up:
@@ -35,5 +39,6 @@ migration-force:
 connect-db:
 	psql --user=postgres --host=localhost --dbname=ipphone_db --port=5433
 
-udp-dump:
-	sudo tcpdump -ni any -s 0 -vv udp port 5060
+
+update-structure:
+	./schema.sh

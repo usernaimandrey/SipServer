@@ -1,1 +1,4 @@
+ALTER TABLE users
+  DROP CONSTRAINT IF EXISTS users_login_uniq;
+
 ALTER TABLE users DROP COLUMN login VARCHAR(255);

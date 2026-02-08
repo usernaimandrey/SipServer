@@ -16,24 +16,30 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 
-	"SipServer/internal/entity/user"
 	"SipServer/internal/registrar"
+	"SipServer/internal/repositoriy/user"
 
 	"github.com/joho/godotenv"
 )
 
 var userNotFound *user.UserNotFoundError
 
+const (
+	CallSchemaProxy    = "proxy"
+	CallSchemaRedirect = "redirect"
+)
+
 type Server struct {
-	srv         *sipgo.Server
-	cl          *sipgo.Client
-	reg         *registrar.Registrar
-	db          *sql.DB
-	hostport    string
-	host        string
-	port        int
-	transaction sync.Map
-	dialogs     sync.Map
+	srv             *sipgo.Server
+	cl              *sipgo.Client
+	reg             *registrar.Registrar
+	db              *sql.DB
+	hostport        string
+	host            string
+	port            int
+	transaction     sync.Map
+	dialogs         sync.Map
+	userRepositoriy *user.UserRepositoriy
 }
 
 func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, error) {
@@ -68,15 +74,16 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, er
 	}
 
 	s := &Server{
-		srv:         srv,
-		cl:          cl,
-		reg:         reg,
-		db:          db,
-		hostport:    fmt.Sprintf("%s:%s", host, port),
-		host:        host,
-		port:        portInt,
-		transaction: sync.Map{},
-		dialogs:     sync.Map{},
+		srv:             srv,
+		cl:              cl,
+		reg:             reg,
+		db:              db,
+		hostport:        fmt.Sprintf("%s:%s", host, port),
+		host:            host,
+		port:            portInt,
+		transaction:     sync.Map{},
+		dialogs:         sync.Map{},
+		userRepositoriy: user.NewUserRepo(db),
 	}
 
 	// REGISTER / INVITE / BYE — ключевые методы для прототипа
@@ -119,8 +126,7 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	newUser := user.NewUser()
-	_, err := newUser.FindByLogin(login, s.db)
+	_, err := s.userRepositoriy.FindByLogin(login)
 
 	if err != nil {
 		if errors.As(err, &userNotFound) {
@@ -274,9 +280,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 
 	callee := strings.TrimSpace(to.Address.User)
 
-	newUser := user.NewUser()
-
-	_, err := newUser.FindByLogin(callee, s.db)
+	user, err := s.userRepositoriy.FindByLoginWithConfig(callee)
 
 	if err != nil {
 		if errors.As(err, &userNotFound) {
@@ -285,6 +289,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 			_ = tx.Respond(res)
 			return
 		} else {
+			log.Printf("[INVITE] callee=%s internal error %v", callee, err)
 			res := sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "InternalError", nil)
 			_ = tx.Respond(res)
 			return
@@ -309,7 +314,8 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	target.UriParams = sip.NewParams().Add("transport", "udp")
 
-	if true {
+	if user.Config.CallSchema == CallSchemaProxy {
+		log.Printf("[INVITE] Proxy path callee: %s", callee)
 		outBoundInvite := buildOutboundInvite(req, &target, s.host, s.port)
 
 		clTx, err := s.cl.TransactionRequest(context.Background(), outBoundInvite)
@@ -324,6 +330,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		go s.proxyInviteResponses(newCtx, clTx)
 	} else {
 		// 302 + Contact: <sip:callee@ip:port>
+		log.Printf("[INVITE] Redirect path callee: %s", callee)
 		res := sip.NewResponseFromRequest(req, sip.StatusMovedTemporarily, "Moved Temporarily", nil)
 
 		res.AppendHeader(&sip.ContactHeader{
