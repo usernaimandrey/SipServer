@@ -17,6 +17,9 @@ import (
 	"github.com/emiago/sipgo/sip"
 
 	"SipServer/internal/registrar"
+	"SipServer/internal/repositoriy"
+	calljournal "SipServer/internal/repositoriy/call_journal"
+	"SipServer/internal/repositoriy/session"
 	"SipServer/internal/repositoriy/user"
 
 	"github.com/joho/godotenv"
@@ -40,6 +43,8 @@ type Server struct {
 	transaction     sync.Map
 	dialogs         sync.Map
 	userRepositoriy *user.UserRepositoriy
+	callJournalRepo *calljournal.CallJournalRepo
+	sessionRepo     *session.SessionRepo
 }
 
 func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, error) {
@@ -84,6 +89,8 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, er
 		transaction:     sync.Map{},
 		dialogs:         sync.Map{},
 		userRepositoriy: user.NewUserRepo(db),
+		callJournalRepo: calljournal.NewCallJournalRepo(db),
+		sessionRepo:     session.NewSessionRepo(db),
 	}
 
 	// REGISTER / INVITE / BYE — ключевые методы для прототипа
@@ -271,6 +278,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	newCtx := NewInviteCtx()
 	newCtx.OriginInvite = req
 	newCtx.ServerTx = tx
+	newCtx.InviteAt = time.Now()
 	s.transaction.Store(key, newCtx)
 
 	resp100 := sip.NewResponseFromRequest(req, sip.StatusTrying, "Trying", nil)
@@ -279,6 +287,8 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	tx.Respond(resp100)
 
 	callee := strings.TrimSpace(to.Address.User)
+
+	s.StartCallAttempt(req, newCtx, callee)
 
 	user, err := s.userRepositoriy.FindByLoginWithConfig(callee)
 
@@ -341,6 +351,28 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 
 }
 
+func (s *Server) StartCallAttempt(req *sip.Request, ctx *InviteCtx, callee string) {
+	caller := ""
+	if f := req.From(); f != nil {
+		caller = strings.TrimSpace(f.Address.User)
+	}
+
+	ctx.InviteAt = time.Now()
+	journalID, err := s.callJournalRepo.StartCallAttempt(
+		context.Background(),
+		req.CallID().Value(),
+		extractTopViaBranch(req),
+		caller,
+		callee,
+		ctx.InviteAt,
+	)
+	if err != nil {
+		log.Printf("[CDR] StartCallAttempt failed: %v", err)
+	} else {
+		ctx.JournalID = journalID
+	}
+}
+
 func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 	callID := req.CallID().Value()
 	fromTag, _ := req.From().Params.Get("tag")
@@ -349,15 +381,22 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 	key1, key2 := MakeDialogKey(callID, fromTag, toTag)
 
 	log.Printf("[BYE] Dialog Key: %s  %s", key1, key2)
+
 	v, ok := s.dialogs.Load(key1)
 	if !ok {
 		v, ok = s.dialogs.Load(key2)
 		if !ok {
 			log.Printf("[BYE] Dialog key not found")
 			_ = tx.Respond(sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil))
+			return
 		}
 	}
-	dlg := v.(*DialogCtx)
+
+	dlg, ok := v.(*DialogCtx)
+	if !ok || dlg == nil {
+		_ = tx.Respond(sip.NewResponseFromRequest(req, 500, "Internal Error", nil))
+		return
+	}
 
 	bye := sip.NewRequest(sip.BYE, dlg.RemoteTarget)
 
@@ -393,11 +432,197 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 	select {
 	case resp := <-clTx.Responses():
 		_ = tx.Respond(sip.NewResponseFromRequest(req, resp.StatusCode, resp.Reason, nil))
-		// можно удалить диалог
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if s.callJournalRepo != nil && dlg.JournalID != 0 && dlg.CallID != "" && dlg.FromTag != "" && dlg.ToTag != "" {
+				endedBy := repositoriy.CallEndedBySystem
+
+				byeFromUser := ""
+				if f := req.From(); f != nil {
+					byeFromUser = strings.TrimSpace(f.Address.User)
+				}
+
+				// точное определение
+				if byeFromUser != "" && dlg.CallerUser != "" && byeFromUser == dlg.CallerUser {
+					endedBy = repositoriy.CallEndedByCaller
+				} else if byeFromUser != "" && dlg.CalleeUser != "" && byeFromUser == dlg.CalleeUser {
+					endedBy = repositoriy.CallEndedByCallee
+				}
+
+				endAt := time.Now()
+
+				talkMs := int(endAt.Sub(dlg.AnswerAt).Milliseconds())
+
+				_ = s.callJournalRepo.EndByBye(
+					context.Background(),
+					dlg.CallID,
+					dlg.FromTag,
+					dlg.ToTag,
+					endedBy,
+					time.Now(),
+					talkMs,
+				)
+			}
+		}
+
+		// Удаляем диалоги
 		s.dialogs.Delete(key1)
 		s.dialogs.Delete(key2)
+
 	case <-time.After(3 * time.Second):
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 504, "Server Time-out", nil))
+	}
+}
+
+func makeReachableContact(login string, src string) (sip.Uri, bool) {
+	host, portStr, err := net.SplitHostPort(src)
+	if err != nil {
+		return sip.Uri{}, false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return sip.Uri{}, false
+	}
+
+	u := sip.Uri{
+		Scheme: "sip",
+		User:   login,
+		Host:   host,
+		Port:   port,
+	}
+
+	u.UriParams = sip.NewParams().Add("transport", "udp")
+	return u, true
+}
+
+func (s *Server) proxyInviteResponses(ctx *InviteCtx, clTx sip.ClientTransaction) {
+	for resp := range clTx.Responses() {
+		up := makeUpstreamResponse(ctx.OriginInvite, resp)
+
+		ctx.LastResp = up
+		_ = ctx.ServerTx.Respond(up)
+
+		if resp.CSeq() == nil || resp.CSeq().MethodName != sip.INVITE {
+			continue
+		}
+
+		code := int(resp.StatusCode)
+
+		if code >= 200 && code < 300 {
+			callID := resp.CallID().Value()
+
+			fromTag, _ := ctx.OriginInvite.From().Params.Get("tag")
+			toTag, _ := resp.To().Params.Get("tag")
+
+			callerCT := ctx.OriginInvite.Contact()
+			ct := resp.Contact()
+			if ct == nil || callerCT == nil {
+				continue
+			}
+
+			log.Printf("[DIALOG STORE] callid=%s fromTag=%s toTag=%s remote=%s",
+				callID, fromTag, toTag, ct.Address,
+			)
+
+			routes := buildRouteSet(resp)
+
+			if ctx.DialogCreated.CompareAndSwap(false, true) {
+				ctx.Got2xx = true
+
+				if s.callJournalRepo != nil && ctx.JournalID != 0 {
+					remoteTarget := ct.Address.String()
+
+					routeSetJSON, err := encodeRouteSet(routes)
+
+					if err != nil {
+						log.Printf("[MARKANSWER] ERROR: %v", err)
+					}
+
+					answerAt := time.Now()
+
+					ringMs := int(answerAt.Sub(ctx.InviteAt).Milliseconds())
+
+					err = s.callJournalRepo.MarkAnswered(
+						context.Background(),
+						ctx.JournalID,
+						callID, fromTag, toTag,
+						remoteTarget,
+						routeSetJSON,
+						time.Now(),
+						ringMs,
+					)
+
+					if err != nil {
+						log.Printf("[MARKANSWER] ERROR: %v", err)
+					}
+				}
+
+				keyAB, keyBA := MakeDialogKey(callID, fromTag, toTag)
+
+				// caller/callee users (для ended_by в BYE — очень удобно)
+				callerUser := ""
+				if f := ctx.OriginInvite.From(); f != nil {
+					callerUser = strings.TrimSpace(f.Address.User)
+				}
+				calleeUser := ""
+				if t := ctx.OriginInvite.To(); t != nil {
+					calleeUser = strings.TrimSpace(t.Address.User)
+				}
+
+				answerAt := time.Now()
+
+				// A -> B (caller -> callee)
+				dlgAB := &DialogCtx{
+					Key:          keyAB,
+					RouteSet:     routes,
+					RemoteTarget: ct.Address, // callee contact
+
+					// --- для CDR / BYE ---
+					JournalID:  ctx.JournalID,
+					CallID:     callID,
+					FromTag:    fromTag,
+					ToTag:      toTag,
+					CallerUser: callerUser,
+					CalleeUser: calleeUser,
+					AnswerAt:   answerAt,
+				}
+
+				// B -> A (callee -> caller)
+				dlgBA := &DialogCtx{
+					Key:          keyBA,
+					RouteSet:     routes,
+					RemoteTarget: callerCT.Address, // caller contact
+
+					JournalID:  ctx.JournalID,
+					CallID:     callID,
+					FromTag:    toTag, // обратное направление
+					ToTag:      fromTag,
+					CallerUser: callerUser,
+					CalleeUser: calleeUser,
+					AnswerAt:   answerAt,
+				}
+
+				s.dialogs.Store(keyAB, dlgAB)
+				s.dialogs.Store(keyBA, dlgBA)
+				log.Printf("SAVE DIALOG KEYS: %s %s", keyAB, keyBA)
+			}
+
+			continue
+		}
+
+		if code == sip.StatusBusyHere || code == sip.StatusGlobalDecline {
+			if s.callJournalRepo != nil && ctx.JournalID != 0 {
+				_ = s.callJournalRepo.MarkRejected(context.Background(), ctx.JournalID, code, resp.Reason, time.Now())
+			}
+			continue
+		}
+
+		if code == sip.StatusRequestTerminated {
+			if s.callJournalRepo != nil && ctx.JournalID != 0 {
+				_ = s.callJournalRepo.MarkCancelled(context.Background(), ctx.JournalID, time.Now())
+			}
+			continue
+		}
 	}
 }
 
@@ -463,74 +688,4 @@ func (s *Server) onCancel(req *sip.Request, tx sip.ServerTransaction) {
 
 	_, _ = s.cl.TransactionRequest(context.Background(), cancel)
 
-}
-
-func makeReachableContact(login string, src string) (sip.Uri, bool) {
-	host, portStr, err := net.SplitHostPort(src)
-	if err != nil {
-		return sip.Uri{}, false
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return sip.Uri{}, false
-	}
-
-	u := sip.Uri{
-		Scheme: "sip",
-		User:   login,
-		Host:   host,
-		Port:   port,
-	}
-
-	u.UriParams = sip.NewParams().Add("transport", "udp")
-	return u, true
-}
-
-func (s *Server) proxyInviteResponses(ctx *InviteCtx, clTx sip.ClientTransaction) {
-	for resp := range clTx.Responses() {
-		up := makeUpstreamResponse(ctx.OriginInvite, resp)
-
-		ctx.LastResp = up
-		ctx.ServerTx.Respond(up)
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.CSeq() != nil && resp.CSeq().MethodName == sip.INVITE {
-			callID := resp.CallID().Value()
-			fromTag, _ := resp.From().Params.Get("tag")
-			toTag, _ := resp.To().Params.Get("tag")
-			callerCT := ctx.OriginInvite.Contact()
-
-			log.Printf("[DIALOG STORE] callid=%s fromTag=%s toTag=%s remote=%s",
-				callID, fromTag, toTag, resp.Contact().Address,
-			)
-
-			ct := resp.Contact()
-			if ct == nil {
-				continue
-			}
-
-			routes := buildRouteSet(resp)
-
-			if ctx.DialogCreated.CompareAndSwap(false, true) {
-				keyAB, keyBA := MakeDialogKey(callID, fromTag, toTag)
-
-				// A -> B (caller -> callee)
-				dlgAB := &DialogCtx{
-					Key:          keyAB,
-					RouteSet:     routes,
-					RemoteTarget: ct.Address, // callee contact
-				}
-
-				// B -> A (callee -> caller)
-				dlgBA := &DialogCtx{
-					Key:          keyBA,
-					RouteSet:     routes,
-					RemoteTarget: callerCT.Address, // caller contact (из INVITE)
-				}
-
-				s.dialogs.Store(keyAB, dlgAB)
-				s.dialogs.Store(keyBA, dlgBA)
-				log.Printf("SAVE DIALOG KEYS: %s %s", keyAB, keyBA)
-			}
-		}
-	}
 }
