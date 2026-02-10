@@ -19,8 +19,6 @@ SET row_security = off;
 ALTER TABLE IF EXISTS ONLY public.user_configs DROP CONSTRAINT IF EXISTS user_configs_user_fk;
 ALTER TABLE IF EXISTS ONLY public.call_sessions DROP CONSTRAINT IF EXISTS call_sessions_journal_id_fkey;
 DROP TRIGGER IF EXISTS trg_user_configs_updated_at ON public.user_configs;
-DROP TRIGGER IF EXISTS trg_call_sessions_touch ON public.call_sessions;
-DROP TRIGGER IF EXISTS trg_call_journal_touch ON public.call_journals;
 DROP INDEX IF EXISTS public.user_configs_user_id_idx;
 DROP INDEX IF EXISTS public.call_sessions_state_idx;
 DROP INDEX IF EXISTS public.call_sessions_dialog_uniq;
@@ -51,7 +49,6 @@ DROP SEQUENCE IF EXISTS public.call_sessions_id_seq;
 DROP TABLE IF EXISTS public.call_sessions;
 DROP SEQUENCE IF EXISTS public.call_journals_id_seq;
 DROP TABLE IF EXISTS public.call_journals;
-DROP FUNCTION IF EXISTS public.touch_updated_at();
 DROP FUNCTION IF EXISTS public.set_updated_at();
 DROP TYPE IF EXISTS public.session_state;
 DROP TYPE IF EXISTS public.ended_by;
@@ -107,20 +104,6 @@ CREATE TYPE public.session_state AS ENUM (
 --
 
 CREATE FUNCTION public.set_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$;
-
-
---
--- Name: touch_updated_at(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.touch_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -451,20 +434,6 @@ CREATE INDEX call_sessions_state_idx ON public.call_sessions USING btree (state,
 --
 
 CREATE INDEX user_configs_user_id_idx ON public.user_configs USING btree (user_id);
-
-
---
--- Name: call_journals trg_call_journal_touch; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trg_call_journal_touch BEFORE UPDATE ON public.call_journals FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
-
-
---
--- Name: call_sessions trg_call_sessions_touch; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trg_call_sessions_touch BEFORE UPDATE ON public.call_sessions FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 
 
 --
