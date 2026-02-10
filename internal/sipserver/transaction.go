@@ -18,6 +18,8 @@ type InviteCtx struct {
 	OutInvite     *sip.Request
 	FinalRespCode int
 	Got2xx        bool
+	JournalID     int64
+	InviteAt      time.Time
 }
 
 func NewInviteCtx() *InviteCtx {
