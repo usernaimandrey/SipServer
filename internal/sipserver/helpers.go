@@ -92,8 +92,8 @@ func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort
 
 	via := &sip.ViaHeader{
 		Transport: "UDP",
-		Host:      "192.168.0.21",
-		Port:      5060,
+		Host:      myHost,
+		Port:      myPort,
 		Params:    sip.NewParams(),
 	}
 	via.Params.Add("branch", sip.GenerateBranch())
