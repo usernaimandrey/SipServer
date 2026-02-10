@@ -1,7 +1,6 @@
 package sipserver
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -119,13 +118,6 @@ func buildOutboundInvite(in *sip.Request, target *sip.Uri, myHost string, myPort
 func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
 	up := sip.NewResponseFromRequest(orig, down.StatusCode, down.Reason, nil)
 
-	up.RemoveHeader("Via")
-	up.RemoveHeader("Contact")
-	up.RemoveHeader("Content-Type")
-	up.RemoveHeader("Content-Length")
-	up.RemoveHeader("Record-Route")
-
-	// 2) Via: для ответа upstream достаточно VIA из orig (в правильном порядке)
 	for _, h := range orig.GetHeaders("Via") {
 		if vh, ok := h.(*sip.ViaHeader); ok && vh != nil {
 			c := *vh
@@ -145,21 +137,16 @@ func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
 	up.ReplaceHeader(&copyCallId)
 	up.ReplaceHeader(&copyCSeq)
 
+	up.RemoveHeader("Record-Route")
 	for _, h := range down.GetHeaders("Record-Route") {
-		up.AppendHeader(h) // можно Clone если нужно
+		up.AppendHeader(h)
 	}
 	if c := down.Contact(); c != nil {
 		up.AppendHeader(c.Clone())
 	}
 
-	up.RemoveHeader("Content-Length")
-	up.RemoveHeader("Content-Type")
-
-	// 5) Body + CT + CL — делаем Replace (один экземпляр)
-	body := down.Body()
-	if len(body) > 0 {
+	if body := down.Body(); len(body) > 0 {
 		up.SetBody(body)
-
 		if ct := down.ContentType(); ct != nil {
 			clone := *ct
 			up.AppendHeader(&clone)
@@ -167,7 +154,6 @@ func makeUpstreamResponse(orig *sip.Request, down *sip.Response) *sip.Response {
 			contentType := sip.ContentTypeHeader("application/sdp")
 			up.AppendHeader(&contentType)
 		}
-
 		cl := sip.ContentLengthHeader(len(body))
 		up.AppendHeader(&cl)
 	} else {
@@ -211,33 +197,4 @@ func stripSelfRoute(routes []*sip.RouteHeader, myHost string, myPort int) []*sip
 		break
 	}
 	return out
-}
-
-func extractTopViaBranch(req *sip.Request) string {
-	vias := req.GetHeaders("Via")
-	if vias == nil || len(vias) == 0 {
-		return ""
-	}
-
-	vh, ok := vias[0].(*sip.ViaHeader)
-
-	if !ok {
-		return ""
-	}
-
-	b, _ := vh.Params.Get("branch")
-	return b
-}
-
-func encodeRouteSet(routes []*sip.RouteHeader) ([]byte, error) {
-	if len(routes) == 0 {
-		return []byte("[]"), nil
-	}
-
-	out := make([]string, 0, len(routes))
-	for _, r := range routes {
-		out = append(out, r.Address.String())
-	}
-
-	return json.Marshal(out)
 }
