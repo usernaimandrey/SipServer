@@ -15,14 +15,18 @@ import (
 )
 
 type HttpServer struct {
-	userUsecase *usecase.UserUsecase
-	validator   *validator.Validate
+	userUsecase        *usecase.UserUsecase
+	sessionUsecase     *usecase.SessionUsecase
+	callJournalUsecase *usecase.CallJournalUsecase
+	validator          *validator.Validate
 }
 
 func NewHttpServer(db *sql.DB) *HttpServer {
 	return &HttpServer{
-		userUsecase: usecase.NewUserUseCase(db),
-		validator:   validator.New(),
+		userUsecase:        usecase.NewUserUseCase(db),
+		sessionUsecase:     usecase.NewSessionUsecase(db),
+		callJournalUsecase: usecase.NewCallJournalUsecase(db),
+		validator:          validator.New(),
 	}
 }
 
@@ -84,6 +88,16 @@ func (s *HttpServer) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	err = s.userUsecase.UpdateUser(id, req)
 	buildResponse(req, w, err)
+}
+
+func (s *HttpServer) ListSession(w http.ResponseWriter, _ *http.Request) {
+	session, err := s.sessionUsecase.List()
+	buildResponse(session, w, err)
+}
+
+func (s *HttpServer) ListCallJournal(w http.ResponseWriter, _ *http.Request) {
+	call_journals, err := s.callJournalUsecase.List()
+	buildResponse(call_journals, w, err)
 }
 
 func buildResponse(entity interface{}, w http.ResponseWriter, err error) {
