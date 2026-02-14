@@ -1,4 +1,4 @@
-package repositoriy
+package repository
 
 type CallEndedBy string
 

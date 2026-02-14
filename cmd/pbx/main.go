@@ -3,20 +3,25 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/emiago/sipgo"
-
+	httpserver "SipServer/internal/http_server"
 	"SipServer/internal/registrar"
+	"SipServer/internal/router"
 	"SipServer/internal/sipserver"
 	"SipServer/pkg/dbconnecter"
+
+	"github.com/emiago/sipgo"
 )
 
 const (
-	retry int = 3
+	retry           int = 3
+	defaultHttpPort     = "8080"
+	defaultSipPort      = "5060"
 )
 
 func main() {
@@ -35,19 +40,36 @@ func main() {
 	}
 
 	defer dbCloser()
+	// http
 
-	s, err := sipserver.New(ua, reg, db)
+	sh := httpserver.NewHttpServer(db)
+	r := router.NewRouter(sh)
+	port := os.Getenv("HTTP_PORT")
+	if port == "" {
+		port = defaultHttpPort
+	}
+	go func() {
+		log.Printf("HTTP server listening on http://0.0.0.0:%s", port)
+		if err := http.ListenAndServe(":"+port, r); err != nil && err != http.ErrServerClosed {
+			log.Println("http server stopped:", err)
+		}
+	}()
+
+	// sip
+	sip, err := sipserver.New(ua, reg, db)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer func() {
+		stop()
+	}()
 
 	// UDP достаточно для прототипа (можно добавить TCP второй строкой)
 	go func() {
 		log.Println("SIP server listening on udp://0.0.0.0:5060")
-		if err := s.ListenAndServe(ctx, "udp", "0.0.0.0:5060"); err != nil {
+		if err := sip.ListenAndServe(ctx, "udp", "0.0.0.0:5060"); err != nil {
 			log.Println("server stopped:", err)
 		}
 	}()

@@ -1,4 +1,4 @@
-package repositoriy
+package repository
 
 func NullIfEmpty(s string) any {
 	if s == "" {

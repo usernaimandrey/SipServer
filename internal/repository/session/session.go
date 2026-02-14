@@ -1,7 +1,7 @@
 package session
 
 import (
-	"SipServer/internal/repositoriy"
+	"SipServer/internal/repository"
 	"database/sql"
 	"time"
 )
@@ -26,7 +26,7 @@ type Session struct {
 	CreatedAt     time.Time
 	EstablishedAt time.Time
 	TerminatedAt  time.Time
-	EndedBy       repositoriy.CallEndedBy
+	EndedBy       repository.CallEndedBy
 	TermCode      int
 	TermReason    string
 	UpdatedAt     time.Time

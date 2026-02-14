@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"SipServer/internal/repositoriy"
+	"SipServer/internal/repository"
 )
 
 type CallResult string
@@ -40,7 +40,7 @@ type CallJournal struct {
 	FinalReason string
 	RingMs      int
 	TalkMs      int
-	EndedBy     repositoriy.CallEndedBy
+	EndedBy     repository.CallEndedBy
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -78,7 +78,7 @@ func (r *CallJournalRepo) StartCallAttempt(
 	err := r.DB.QueryRowContext(
 		ctx, q,
 		callID,
-		repositoriy.NullIfEmpty(initBranch),
+		repository.NullIfEmpty(initBranch),
 		callerUser,
 		calleeUser,
 		inviteAt,
@@ -105,7 +105,7 @@ func (r *CallJournalRepo) MarkRejected(
 			ended_by     = COALESCE(ended_by, 'callee')
 		WHERE id = $1
 	`
-	_, err := r.DB.ExecContext(ctx, q, journalID, endAt, code, repositoriy.NullIfEmpty(reason))
+	_, err := r.DB.ExecContext(ctx, q, journalID, endAt, code, repository.NullIfEmpty(reason))
 	return err
 }
 
@@ -189,7 +189,7 @@ func (r *CallJournalRepo) MarkAnswered(
 		callID,
 		fromTag,
 		toTag,
-		repositoriy.NullIfEmpty(remoteTarget),
+		repository.NullIfEmpty(remoteTarget),
 		routeSetJSON,
 		answerAt,
 	); err != nil {
@@ -202,7 +202,7 @@ func (r *CallJournalRepo) MarkAnswered(
 func (r *CallJournalRepo) EndByBye(
 	ctx context.Context,
 	callID, fromTag, toTag string,
-	endedBy repositoriy.CallEndedBy,
+	endedBy repository.CallEndedBy,
 	endAt time.Time,
 	talkMs int,
 ) error {

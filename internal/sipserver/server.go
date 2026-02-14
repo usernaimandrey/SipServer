@@ -17,15 +17,13 @@ import (
 	"github.com/emiago/sipgo/sip"
 
 	"SipServer/internal/registrar"
-	"SipServer/internal/repositoriy"
-	calljournal "SipServer/internal/repositoriy/call_journal"
-	"SipServer/internal/repositoriy/session"
-	"SipServer/internal/repositoriy/user"
+	"SipServer/internal/repository"
+	calljournal "SipServer/internal/repository/call_journal"
+	"SipServer/internal/repository/session"
+	userrepo "SipServer/internal/repository/user"
 
 	"github.com/joho/godotenv"
 )
-
-var userNotFound *user.UserNotFoundError
 
 const (
 	CallSchemaProxy    = "proxy"
@@ -42,7 +40,7 @@ type Server struct {
 	port            int
 	transaction     sync.Map
 	dialogs         sync.Map
-	userRepositoriy *user.UserRepositoriy
+	userRepositoriy *userrepo.UserRepositoriy
 	callJournalRepo *calljournal.CallJournalRepo
 	sessionRepo     *session.SessionRepo
 }
@@ -88,7 +86,7 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, er
 		port:            portInt,
 		transaction:     sync.Map{},
 		dialogs:         sync.Map{},
-		userRepositoriy: user.NewUserRepo(db),
+		userRepositoriy: userrepo.NewUserRepo(db),
 		callJournalRepo: calljournal.NewCallJournalRepo(db),
 		sessionRepo:     session.NewSessionRepo(db),
 	}
@@ -136,7 +134,7 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 	_, err := s.userRepositoriy.FindByLogin(login)
 
 	if err != nil {
-		if errors.As(err, &userNotFound) {
+		if errors.Is(err, userrepo.ErrUserNotFound) {
 			log.Printf("user %s not founf", login)
 			res := sip.NewResponseFromRequest(req, sip.StatusNotFound, "NotFound", nil)
 			_ = tx.Respond(res)
@@ -293,7 +291,7 @@ func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	user, err := s.userRepositoriy.FindByLoginWithConfig(callee)
 
 	if err != nil {
-		if errors.As(err, &userNotFound) {
+		if errors.Is(err, userrepo.ErrUserNotFound) {
 			log.Printf("[INVITE] callee=%s not registered", callee)
 			res := sip.NewResponseFromRequest(req, sip.StatusNotFound, "Not Found", nil)
 			_ = tx.Respond(res)
@@ -435,7 +433,7 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if s.callJournalRepo != nil && dlg.JournalID != 0 && dlg.CallID != "" && dlg.FromTag != "" && dlg.ToTag != "" {
-				endedBy := repositoriy.CallEndedBySystem
+				endedBy := repository.CallEndedBySystem
 
 				byeFromUser := ""
 				if f := req.From(); f != nil {
@@ -444,9 +442,9 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 
 				// точное определение
 				if byeFromUser != "" && dlg.CallerUser != "" && byeFromUser == dlg.CallerUser {
-					endedBy = repositoriy.CallEndedByCaller
+					endedBy = repository.CallEndedByCaller
 				} else if byeFromUser != "" && dlg.CalleeUser != "" && byeFromUser == dlg.CalleeUser {
-					endedBy = repositoriy.CallEndedByCallee
+					endedBy = repository.CallEndedByCallee
 				}
 
 				endAt := time.Now()
