@@ -22,15 +22,15 @@ const (
 var ErrNotFound = errors.New("cdr: not found")
 
 type CallJournal struct {
-	Id         int            `json:"id"`
-	CallId     string         `json:"call_id"`
-	InitBranch string         `json:"init_branch,omitempty"`
-	FromTag    sql.NullString `json:"from_tag,omitempty"`
-	ToTag      sql.NullString `json:"to_tag,omitempty"`
-	CallerUser sql.NullString `json:"caller_user,omitempty"`
-	CalleeUser sql.NullString `json:"callee_user,omitempty"`
-	CallerURI  sql.NullString `json:"caller_uri,omitempty"`
-	CalleeURI  sql.NullString `json:"callee_uri,omitempty"`
+	Id         int     `json:"id"`
+	CallId     string  `json:"call_id"`
+	InitBranch string  `json:"init_branch,omitempty"`
+	FromTag    *string `json:"from_tag,omitempty"`
+	ToTag      *string `json:"to_tag,omitempty"`
+	CallerUser *string `json:"caller_user,omitempty"`
+	CalleeUser *string `json:"callee_user,omitempty"`
+	CallerURI  *string `json:"caller_uri,omitempty"`
+	CalleeURI  *string `json:"callee_uri,omitempty"`
 
 	InviteAt   time.Time  `json:"invite_at"`
 	First18xAt *time.Time `json:"first_18x_at,omitempty"`
@@ -38,10 +38,10 @@ type CallJournal struct {
 	EndAt      *time.Time `json:"end_at,omitempty"`
 
 	Result      *CallResult             `json:"result,omitempty"`
-	FinalCode   sql.NullInt64           `json:"final_code,omitempty"`
-	FinalReason sql.NullString          `json:"final_reason,omitempty"`
-	RingMs      sql.NullInt64           `json:"ring_ms,omitempty"`
-	TalkMs      sql.NullInt64           `json:"talk_ms,omitempty"`
+	FinalCode   *int                    `json:"final_code,omitempty"`
+	FinalReason *string                 `json:"final_reason,omitempty"`
+	RingMs      *int                    `json:"ring_ms,omitempty"`
+	TalkMs      *int                    `json:"talk_ms,omitempty"`
 	EndedBy     *repository.CallEndedBy `json:"ended_by,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`

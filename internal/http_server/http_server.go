@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
+	"SipServer/internal/metrics"
 	"SipServer/internal/repository/user"
 	"SipServer/internal/usecase"
 
@@ -19,6 +23,16 @@ type HttpServer struct {
 	sessionUsecase     *usecase.SessionUsecase
 	callJournalUsecase *usecase.CallJournalUsecase
 	validator          *validator.Validate
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func NewHttpServer(db *sql.DB) *HttpServer {
@@ -153,4 +167,30 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func MetricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metrics.HTTPInFlight.Inc()
+		defer metrics.HTTPInFlight.Dec()
+
+		sw := &statusWriter{ResponseWriter: w, status: 200}
+		start := time.Now()
+
+		next.ServeHTTP(sw, r)
+
+		route := r.URL.Path
+		if current := mux.CurrentRoute(r); current != nil {
+			if tpl, err := current.GetPathTemplate(); err == nil {
+				route = tpl
+			}
+		}
+
+		if !strings.Contains(route, "/metrics") {
+			status := strconv.Itoa(sw.status)
+			metrics.HTTPRequests.WithLabelValues(r.Method, route, status).Inc()
+			metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		}
+
+	})
 }

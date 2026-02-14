@@ -3,11 +3,11 @@ import { pretty } from "../api";
 
 type Props = {
   rows: any[];
-  preferCols?: string[]; // необязательно: важные колонки первыми
+  preferCols?: string[]; 
 };
 
 function buildCols(rows: any[], preferCols?: string[]) {
-  const all = Array.from(new Set(rows.flatMap((r) => Object.keys(r || {}))));
+  const all = Array.from(new Set(rows?.flatMap((r) => Object.keys(r || {}))));
   if (!preferCols?.length) return all;
   const prefer = preferCols.filter((c) => all.includes(c));
   const rest = all.filter((c) => !prefer.includes(c));
@@ -22,7 +22,7 @@ export default function ResponsiveTable({ rows, preferCols }: Props) {
     const isObj = v && typeof v === "object";
     const text = isObj ? JSON.stringify(v, null, 2) : pretty(v);
 
-    if (isObj || text.length > 80) {
+    if (isObj || text?.length > 80) {
       return <pre className="cellPre" style={{ margin: 0 }}>{text}</pre>;
     }
     return <span className="cell" title={text}>{text}</span>;
@@ -34,16 +34,16 @@ export default function ResponsiveTable({ rows, preferCols }: Props) {
       <div className="tableWrap">
         <table className="table">
           <thead>
-            <tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr>
+            <tr>{cols?.map((c) => <th key={c}>{c}</th>)}</tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {rows?.map((r, i) => (
               <tr key={i}>
-                {cols.map((c) => <td key={c}>{renderValue(r?.[c])}</td>)}
+                {cols?.map((c) => <td key={c}>{renderValue(r?.[c])}</td>)}
               </tr>
             ))}
-            {!rows.length && (
-              <tr><td colSpan={cols.length}><small className="muted">No data</small></td></tr>
+            {!rows?.length && (
+              <tr><td colSpan={cols?.length}><small className="muted">No data</small></td></tr>
             )}
           </tbody>
         </table>
@@ -51,10 +51,10 @@ export default function ResponsiveTable({ rows, preferCols }: Props) {
 
       {/* Mobile/cards */}
       <div className="cards" style={{ display: "none" }}>
-        {rows.map((r, i) => (
+        {rows?.map((r, i) => (
           <div className="cardRow" key={i}>
             <div className="kv">
-              {cols.map((c) => (
+              {cols?.map((c) => (
                 <React.Fragment key={c}>
                   <div className="k">{c}</div>
                   <div className="v">{renderValue(r?.[c])}</div>
@@ -63,7 +63,7 @@ export default function ResponsiveTable({ rows, preferCols }: Props) {
             </div>
           </div>
         ))}
-        {!rows.length && <small className="muted">No data</small>}
+        {!rows?.length && <small className="muted">No data</small>}
       </div>
     </div>
   );

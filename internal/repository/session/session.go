@@ -27,8 +27,8 @@ type Session struct {
 	EstablishedAt *time.Time              `json:"established_at,omitempty"`
 	TerminatedAt  *time.Time              `json:"terminated_at,omitempty"`
 	EndedBy       *repository.CallEndedBy `json:"ended_by,omitempty"`
-	TermCode      sql.NullInt64           `json:"term_code,omitempty"`
-	TermReason    sql.NullString          `json:"term_reason,omitempty"`
+	TermCode      *int                    `json:"term_code,omitempty"`
+	TermReason    *string                 `json:"term_reason,omitempty"`
 	UpdatedAt     time.Time               `json:"updated_at"`
 }
 

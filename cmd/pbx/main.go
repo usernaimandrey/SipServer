@@ -10,12 +10,15 @@ import (
 	"time"
 
 	httpserver "SipServer/internal/http_server"
+	"SipServer/internal/metrics"
 	"SipServer/internal/registrar"
 	"SipServer/internal/router"
 	"SipServer/internal/sipserver"
 	"SipServer/pkg/dbconnecter"
 
 	"github.com/emiago/sipgo"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 const (
@@ -40,22 +43,31 @@ func main() {
 	}
 
 	defer dbCloser()
-	// http
+	// ---------------- METRICS ----------------
+
+	regM := prometheus.NewRegistry()
+	regM.MustRegister(
+		collectors.NewGoCollector(), // goroutines, GC, memory
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	metrics.MustRegister(regM)
+	// ---------------- HTTP -------------------
 
 	sh := httpserver.NewHttpServer(db)
-	r := router.NewRouter(sh)
+	r := router.NewRouter(sh, regM)
+	handler := httpserver.MetricsMiddleware(r)
 	port := os.Getenv("HTTP_PORT")
 	if port == "" {
 		port = defaultHttpPort
 	}
 	go func() {
 		log.Printf("HTTP server listening on http://0.0.0.0:%s", port)
-		if err := http.ListenAndServe(":"+port, r); err != nil && err != http.ErrServerClosed {
+		if err := http.ListenAndServe(":"+port, handler); err != nil && err != http.ErrServerClosed {
 			log.Println("http server stopped:", err)
 		}
 	}()
 
-	// sip
+	// ------------------- SIP -------------------
 	sip, err := sipserver.New(ua, reg, db)
 	if err != nil {
 		log.Fatal(err)
@@ -66,7 +78,6 @@ func main() {
 		stop()
 	}()
 
-	// UDP достаточно для прототипа (можно добавить TCP второй строкой)
 	go func() {
 		log.Println("SIP server listening on udp://0.0.0.0:5060")
 		if err := sip.ListenAndServe(ctx, "udp", "0.0.0.0:5060"); err != nil {

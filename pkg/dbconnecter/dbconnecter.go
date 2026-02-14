@@ -36,9 +36,31 @@ func DbConnecter(defaultDB bool, retry int) (*sql.DB, string, DbCloser, error) {
 		connectDb = dbName
 	}
 
-	dbPort := os.Getenv("POSTGRES_PORT")
+	host := os.Getenv("POSTGRES_HOST")
+	if host == "" {
+		host = "localhost"
+	}
 
-	connStr := fmt.Sprintf("postgres://postgres@localhost:%v/%v?sslmode=disable", dbPort, connectDb)
+	port := os.Getenv("POSTGRES_PORT")
+	if port == "" {
+		port = "5432"
+	}
+
+	user := os.Getenv("POSTGRES_USER")
+	if user == "" {
+		user = "postgres"
+	}
+
+	password := os.Getenv("POSTGRES_PASSWORD")
+
+	connStr := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		user,
+		password,
+		host,
+		port,
+		connectDb,
+	)
 
 	db, err := sql.Open("postgres", connStr)
 

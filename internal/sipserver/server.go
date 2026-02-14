@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -43,6 +44,7 @@ type Server struct {
 	userRepositoriy *userrepo.UserRepositoriy
 	callJournalRepo *calljournal.CallJournalRepo
 	sessionRepo     *session.SessionRepo
+	activeDialog    int64
 }
 
 func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, error) {
@@ -100,8 +102,10 @@ func New(ua *sipgo.UserAgent, reg *registrar.Registrar, db *sql.DB) (*Server, er
 
 	// На всякий случай: если прилетит что-то ещё
 	srv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
-		res := sip.NewResponseFromRequest(req, sip.StatusMethodNotAllowed, "Method Not Allowed", nil)
-		_ = tx.Respond(res)
+		start := time.Now()
+		sipIn(req.Method)
+		defer observeHandler(req.Method, start)
+		respond(req, tx, sip.StatusMethodNotAllowed, "Method Not Allowed")
 	})
 
 	return s, nil
@@ -112,8 +116,9 @@ func (s *Server) ListenAndServe(ctx context.Context, network, addr string) error
 }
 
 func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
-	// ВНИМАНИЕ: для ВКР-прототипа делаем без Digest-авторизации.
-	// В перспективе: 401 + WWW-Authenticate и проверка Authorization.
+	start := time.Now()
+	sipIn(req.Method)
+	defer observeHandler(req.Method, start)
 
 	from := req.From()
 	contact := req.Contact()
@@ -169,6 +174,10 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 }
 
 func (s *Server) onAck(req *sip.Request, tx sip.ServerTransaction) {
+	start := time.Now()
+	sipIn(req.Method)
+	defer observeHandler(req.Method, start)
+
 	callID := req.CallID().Value()
 	fromTag, _ := req.From().Params.Get("tag")
 	toTag, _ := req.To().Params.Get("tag")
@@ -228,6 +237,10 @@ func (s *Server) onAck(req *sip.Request, tx sip.ServerTransaction) {
 }
 
 func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
+	start := time.Now()
+	sipIn(req.Method)
+	defer observeHandler(req.Method, start)
+
 	to := req.To()
 	if to == nil || strings.TrimSpace(to.Address.User) == "" {
 		log.Print("Bad Request")
@@ -372,6 +385,10 @@ func (s *Server) StartCallAttempt(req *sip.Request, ctx *InviteCtx, callee strin
 }
 
 func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
+	start := time.Now()
+	sipIn(req.Method)
+	defer observeHandler(req.Method, start)
+
 	callID := req.CallID().Value()
 	fromTag, _ := req.From().Params.Get("tag")
 	toTag, _ := req.To().Params.Get("tag")
@@ -451,7 +468,7 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 
 				talkMs := int(endAt.Sub(dlg.AnswerAt).Milliseconds())
 
-				_ = s.callJournalRepo.EndByBye(
+				err := s.callJournalRepo.EndByBye(
 					context.Background(),
 					dlg.CallID,
 					dlg.FromTag,
@@ -460,12 +477,19 @@ func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 					time.Now(),
 					talkMs,
 				)
+
+				if err != nil {
+					log.Printf("[BYE] Update session err: %v", err)
+				}
 			}
 		}
 
 		// Удаляем диалоги
 		s.dialogs.Delete(key1)
 		s.dialogs.Delete(key2)
+
+		atomic.AddInt64(&s.activeDialog, -1)
+		sipActiveDialogsSet(s.activeDialog)
 
 	case <-time.After(3 * time.Second):
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 504, "Server Time-out", nil))
@@ -602,6 +626,8 @@ func (s *Server) proxyInviteResponses(ctx *InviteCtx, clTx sip.ClientTransaction
 
 				s.dialogs.Store(keyAB, dlgAB)
 				s.dialogs.Store(keyBA, dlgBA)
+				atomic.AddInt64(&s.activeDialog, 1)
+				sipActiveDialogsSet(atomic.LoadInt64(&s.activeDialog))
 				log.Printf("SAVE DIALOG KEYS: %s %s", keyAB, keyBA)
 			}
 
@@ -625,6 +651,10 @@ func (s *Server) proxyInviteResponses(ctx *InviteCtx, clTx sip.ClientTransaction
 }
 
 func (s *Server) onCancel(req *sip.Request, tx sip.ServerTransaction) {
+	start := time.Now()
+	sipIn(req.Method)
+	defer observeHandler(req.Method, start)
+
 	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 
 	key, ok := inviteKeyFromReq(req)

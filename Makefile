@@ -48,3 +48,11 @@ update-structure:
 .PHONY: tidy
 tidy:
 	go mod tidy
+
+.PHONY: obs-up obs-down
+obs-up:
+	docker compose up -d --build prometheus grafana postgres sipserver
+
+obs-down:
+	docker compose down
+

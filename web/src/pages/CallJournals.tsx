@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../api";
 import ResponsiveTable from "../components/ResponsiveTable";
 

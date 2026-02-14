@@ -5,13 +5,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gorilla/mux"
-
 	httpserver "SipServer/internal/http_server"
+
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-func NewRouter(s *httpserver.HttpServer) *mux.Router {
+func NewRouter(s *httpserver.HttpServer, reg *prometheus.Registry) *mux.Router {
 	r := mux.NewRouter()
+	// metrics
+	r.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{})).Methods("GET")
+	//api
 	api := r.PathPrefix("/api").Subrouter()
 	// users
 	api.HandleFunc("/users", s.ListUsers).Methods("GET")
