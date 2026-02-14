@@ -1,3 +1,5 @@
+include Front.mk
+
 POSTGRESQL_URL := postgres://postgres@localhost:5433/ipphone_db?sslmode=disable
 
 run:
@@ -42,3 +44,7 @@ connect-db:
 
 update-structure:
 	./schema.sh
+
+.PHONY: tidy
+tidy:
+	go mod tidy
