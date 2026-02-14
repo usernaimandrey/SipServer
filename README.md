@@ -31,28 +31,25 @@ SipServer — это сигнальный сервер SIP, который:
 
 ```mermaid
 flowchart LR
-  Caller["SIP Клиент (Caller)"]
-  Callee["SIP Клиент (Callee)"]
-  Admin["Администратор (Browser)"]
-  Ops["Инженер мониторинга"]
+  Caller["SIP клиент (Caller)"]
+  Callee["SIP клиент (Callee)"]
+  Admin["Администратор (браузер)"]
+  Ops["Мониторинг"]
 
-  SipServer["SipServer\n(SIP + HTTP + Метрики)"]
-
+  App["SipServer"]
   DB["PostgreSQL"]
   Prom["Prometheus"]
   Graf["Grafana"]
 
-  Caller <-- "SIP UDP 5060" --> SipServer
-  Callee <-- "SIP UDP 5060" --> SipServer
+  Caller <-->|SIP UDP :5060| App
+  Callee <-->|SIP UDP :5060| App
 
-  Admin -->|"HTTP 8080\nАдминка + API"| SipServer
+  Admin -->|HTTP :8080| App
+  App -->|SQL| DB
 
-  SipServer -->|"SQL"| DB
-
-  Prom -->|"GET /metrics"| SipServer
-  Graf -->|"Query"| Prom
-  Ops -->|"HTTP 3000"| Graf
-
+  Prom -->|GET /metrics| App
+  Graf -->|Datasource| Prom
+  Ops -->|HTTP :3000| Graf
 ```
 
 ---
@@ -61,24 +58,24 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  subgraph SipServer
-    SIP["SIP Engine\n(sipgo)\nUDP 5060"]
-    HTTP["HTTP Server\n:8080\n/api\n/metrics\nSPA"]
-    REG["Registrar\n(in-memory bindings)"]
-    DLG["Dialogs & Transactions\n(sync.Map)"]
-    DBLayer["Repository Layer"]
+  subgraph App["SipServer"]
+    SIP["SIP Engine (sipgo) UDP :5060"]
+    HTTP["HTTP Server :8080 (/api, /metrics, SPA)"]
+    REG["Registrar (in-memory)"]
+    STATE["Dialogs/Transactions (sync.Map)"]
+    REPO["Repositories (PostgreSQL)"]
   end
 
-  Postgres["PostgreSQL"]
+  DB["PostgreSQL"]
   Prom["Prometheus"]
   Graf["Grafana"]
 
   SIP --> REG
-  SIP --> DLG
-  SIP --> DBLayer
-  HTTP --> DBLayer
+  SIP --> STATE
+  SIP --> REPO
+  HTTP --> REPO
 
-  DBLayer --> Postgres
+  REPO --> DB
   Prom --> HTTP
   Graf --> Prom
 ```
