@@ -387,6 +387,11 @@ up
 - ❌ В режиме redirect сервер не отслеживает жизненный цикл диалога
 
  ---
+## 11. Тестирование
+
+- условно-бесплатный софт-фон [ZoiPer](https://www.zoiper.com/en/voip-softphone/download/current)
+- CLI утилита [GOPHONE](https://github.com/emiago/gophone)
+ ---
 ## Автор
 
 Проект разработан в учебных целях.  
