@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<scenario name="Redirect CPS (safe)">
+
+  <send><![CDATA[
+INVITE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+From: <sip:sipp@[local_ip]>;tag=[call_number]
+To: <sip:[service]@[remote_ip]>
+Call-ID: [call_id]
+CSeq: 1 INVITE
+Contact: <sip:sipp@[local_ip]:[local_port]>
+Max-Forwards: 70
+Content-Length: 0
+
+]]></send>
+
+<recv response="100" optional="true"/>
+
+<recv response="302" next="ack_end"/>
+<recv response="487" next="ack_end"/>
+<recv response="408" next="ack_end"/>
+<recv response="404" next="ack_end"/>
+<recv response="480" next="ack_end"/>
+<recv response="486" next="ack_end"/>
+<recv response="488" next="ack_end"/>
+<recv response="500" next="ack_end"/>
+<recv response="503" next="ack_end"/>
+
+  <label id="ack_end"/>
+
+  <send><![CDATA[
+ACK sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+From: <sip:sipp@[local_ip]>;tag=[call_number]
+To: <sip:[service]@[remote_ip]>[peer_tag_param]
+Call-ID: [call_id]
+CSeq: 1 ACK
+Content-Length: 0
+
+]]></send>
+
+<pause milliseconds="20"/>
+
+</scenario>

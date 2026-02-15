@@ -17,6 +17,7 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 
+	"SipServer/internal/metrics"
 	"SipServer/internal/registrar"
 	"SipServer/internal/repository"
 	calljournal "SipServer/internal/repository/call_journal"
@@ -155,6 +156,11 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 
 	reachable, ok := makeReachableContact(login, src)
 
+	if s.reg.IsRegistered(login, reachable, src) {
+		respond(req, tx, sip.StatusOK, "OK")
+		return
+	}
+
 	if ok {
 		s.reg.Put(login, reachable, src, 60*time.Second)
 		log.Printf("[REGISTER] user=%s contact=%s (normalized) source=%s",
@@ -169,8 +175,8 @@ func (s *Server) onRegister(req *sip.Request, tx sip.ServerTransaction) {
 
 	log.Printf("[REGISTER] user=%s contact=%s source=%s", login, contact.Address.String(), req.Source())
 
-	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
-	_ = tx.Respond(res)
+	metrics.SIPRegistrations.Inc()
+	respond(req, tx, sip.StatusOK, "OK")
 }
 
 func (s *Server) onAck(req *sip.Request, tx sip.ServerTransaction) {

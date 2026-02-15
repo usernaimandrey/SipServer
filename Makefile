@@ -1,6 +1,7 @@
 include Front.mk
 
 POSTGRESQL_URL := postgres://postgres@localhost:5433/ipphone_db?sslmode=disable
+IP := 192.168.1.15:5060
 
 run:
 	docker-compose start
@@ -45,14 +46,32 @@ connect-db:
 update-structure:
 	./schema.sh
 
+# rebuild deps
 .PHONY: tidy
 tidy:
 	go mod tidy
 
+# run all service in docker
 .PHONY: obs-up obs-down
 obs-up:
 	docker compose up -d --build prometheus grafana postgres sipserver
 
 obs-down:
 	docker compose down
+
+## run perf tests
+
+run-perf-test-proxy:
+	sipp 192.168.1.15:5060 -sf perf_tests/uac_proxy_cps.xml -s 1001 \
+  	-r 200 -l 20000 -m 50000 \
+  	-recv_timeout 3000 -timeout 10 \
+  	-trace_err -trace_stat -stf proxy_cps_200.csv
+
+
+
+run-perf-test-redirect:
+	sipp $(IP) -sf perf_tests/uac_redirect_cps_safe.xml -s 1001 \
+  	-r 500 -l 20000 -m 50000 \
+  	-recv_timeout 3000 -timeout 10 \
+  	-trace_err -trace_stat -stf redirect_cps_500.csv
 

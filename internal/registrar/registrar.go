@@ -1,6 +1,7 @@
 package registrar
 
 import (
+	"reflect"
 	"sync"
 	"time"
 
@@ -38,6 +39,19 @@ func (r *Registrar) Put(user string, contact sip.Uri, source string, expires tim
 		Source:    source,
 	}
 
+}
+
+func (r *Registrar) IsRegistered(user string, contact sip.Uri, source string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if contactBinding, ok := r.loc[user]; ok {
+		if reflect.DeepEqual(contactBinding, contact) && contactBinding.Source == source && !time.Now().After(contactBinding.ExpiresAt) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *Registrar) Get(user string) (ContactBinding, bool) {
